@@ -25,6 +25,8 @@ from .widget import (
     ConnectDialog,
     ContractManager,
     TradingWidget,
+    StockTradingWidget,
+    Level2Widget,
     AboutDialog,
     GlobalDialog
 )
@@ -68,7 +70,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.trading_widget, trading_dock = self.create_dock(
             TradingWidget, _("交易"), QtCore.Qt.DockWidgetArea.LeftDockWidgetArea
         )
-        tick_widget, tick_dock = self.create_dock(
+        self.tick_widget, tick_dock = self.create_dock(
             TickMonitor, _("行情"), QtCore.Qt.DockWidgetArea.RightDockWidgetArea
         )
         order_widget, order_dock = self.create_dock(
@@ -94,7 +96,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.save_window_setting("default")
 
-        tick_widget.itemDoubleClicked.connect(self.trading_widget.update_with_cell)
+        self.tick_widget.itemDoubleClicked.connect(self.trading_widget.update_with_cell)
         position_widget.itemDoubleClicked.connect(self.trading_widget.update_with_cell)
 
     def init_menu(self) -> None:
@@ -135,6 +137,25 @@ class MainWindow(QtWidgets.QMainWindow):
             func = partial(self.open_widget, widget_class, app.app_name)
 
             self.add_action(app_menu, app.display_name, app.icon_name, func, True)
+
+        # Add stock trading window
+        app_menu.addSeparator()
+        self.add_action(
+            app_menu,
+            "股票交易",
+            get_icon_path(__file__, "contract.ico"),
+            self.open_stock_trading_widget,
+            True
+        )
+
+        # Add Level-2 market data window
+        self.add_action(
+            app_menu,
+            "Level-2 十档行情",
+            get_icon_path(__file__, "contract.ico"),
+            self.open_level2_widget,
+            True
+        )
 
         # Global setting editor
         action: QtGui.QAction = QtGui.QAction(_("配置"), self)
@@ -287,6 +308,44 @@ class MainWindow(QtWidgets.QMainWindow):
             widget.exec()
         else:
             widget.show()
+
+    def open_stock_trading_widget(self) -> None:
+        """
+        Open a new stock trading widget instance.
+        """
+        import time
+        # Create unique name for each instance
+        timestamp = str(int(time.time() * 1000))
+        name = f"stock_trading_{timestamp}"
+        
+        widget = StockTradingWidget(self.main_engine, self.event_engine)
+        widget._widget_name = name  # Store the name for cleanup
+        widget.setWindowTitle(f"股票交易 - {timestamp[-6:]}")  # Add unique identifier to title
+        
+        # Get selected tick data from tick monitor and update stock trading widget
+        if hasattr(self, 'tick_widget') and self.tick_widget:
+            current_item = self.tick_widget.currentItem()
+            if current_item:
+                # Update the stock trading widget with selected tick data
+                widget.update_with_cell(current_item)
+        
+        self.widgets[name] = widget
+        widget.show()
+
+    def open_level2_widget(self) -> None:
+        """
+        Open a new Level-2 market data widget instance.
+        """
+        import time
+        # Create unique name for each instance
+        timestamp = str(int(time.time() * 1000))
+        name = f"level2_{timestamp}"
+        
+        widget = Level2Widget(self.main_engine, self.event_engine)
+        widget._widget_name = name  # Store the name for cleanup
+        widget.setWindowTitle(f"Level-2 十档行情 - {timestamp[-6:]}")  # Add unique identifier to title
+        self.widgets[name] = widget
+        widget.show()
 
     def save_window_setting(self, name: str) -> None:
         """

@@ -1071,6 +1071,362 @@ class ActiveOrderMonitor(OrderMonitor):
             self.hideRow(row)
 
 
+class StockTradingWidget(QtWidgets.QWidget):
+    """
+    Stock trading widget based on trader.ui layout.
+    """
+    
+    signal_tick: QtCore.Signal = QtCore.Signal(Event)
+    signal_position: QtCore.Signal = QtCore.Signal(Event)
+    signal_account: QtCore.Signal = QtCore.Signal(Event)
+
+    def __init__(self, main_engine: MainEngine, event_engine: EventEngine) -> None:
+        """"""
+        super().__init__()
+        
+        self.main_engine: MainEngine = main_engine
+        self.event_engine: EventEngine = event_engine
+        
+        self.vt_symbol: str = ""
+        self.price_digits: int = 2
+        self.available_balance: float = 0
+        self.position_volume: int = 0
+        
+        self.init_ui()
+        self.register_event()
+    
+    def init_ui(self) -> None:
+        """Initialize user interface."""
+        self.setFixedSize(400, 380)  # 宽度减少到400，高度恢复到380
+        self.setWindowTitle("股票交易")
+        self.setWindowFlags(QtCore.Qt.WindowType.Window)  # 设置为独立窗口
+        
+        # Create tab widget
+        self.tab_widget = QtWidgets.QTabWidget(self)
+        self.tab_widget.setGeometry(0, 0, 400, 380)  # 调整tab widget尺寸
+        
+        # Create trading tab
+        self.trading_tab = QtWidgets.QWidget()
+        self.tab_widget.addTab(self.trading_tab, "交易")
+        
+        # Create algorithm tab (placeholder)
+        self.algo_tab = QtWidgets.QWidget()
+        self.tab_widget.addTab(self.algo_tab, "算法")
+        
+        self.init_trading_tab()
+    
+    def init_trading_tab(self) -> None:
+        """Initialize trading tab interface."""
+        # Symbol input
+        self.symbol_edit = QtWidgets.QLineEdit()
+        self.symbol_edit.setGeometry(50, 10, 130, 21)
+        self.symbol_edit.setText("128131    崇达转2")
+        self.symbol_edit.returnPressed.connect(self.on_symbol_changed)
+        
+        # Order type combo
+        self.type_combo = QtWidgets.QComboBox()
+        self.type_combo.setGeometry(50, 40, 130, 24)
+        self.type_combo.addItems(["限价", "其他"])
+        
+        # Price input
+        self.price_spinbox = QtWidgets.QDoubleSpinBox()
+        self.price_spinbox.setGeometry(50, 70, 130, 23)
+        self.price_spinbox.setDecimals(3)
+        self.price_spinbox.setMaximum(9999.999)
+        self.price_spinbox.setSingleStep(0.001)
+        self.price_spinbox.setValue(166.695)
+        
+        # Volume combo
+        self.volume_combo = QtWidgets.QComboBox()
+        self.volume_combo.setGeometry(50, 110, 91, 24)
+        self.volume_combo.setEditable(True)
+        
+        # Position fraction radio buttons with better spacing
+        self.radio_half = QtWidgets.QRadioButton("1/2")
+        self.radio_half.setGeometry(10, 150, 50, 22)  # 增加宽度和高度
+        self.radio_half.setStyleSheet("font-size: 12px;")
+        self.radio_half.clicked.connect(lambda: self.on_fraction_selected(0.5))
+        
+        self.radio_third = QtWidgets.QRadioButton("1/3")
+        self.radio_third.setGeometry(70, 150, 50, 22)
+        self.radio_third.setStyleSheet("font-size: 12px;")
+        self.radio_third.clicked.connect(lambda: self.on_fraction_selected(1.0/3))
+        
+        self.radio_quarter = QtWidgets.QRadioButton("1/4")
+        self.radio_quarter.setGeometry(130, 150, 50, 22)
+        self.radio_quarter.setStyleSheet("font-size: 12px;")
+        self.radio_quarter.clicked.connect(lambda: self.on_fraction_selected(0.25))
+        
+        self.radio_fifth = QtWidgets.QRadioButton("1/5")
+        self.radio_fifth.setGeometry(190, 150, 50, 22)
+        self.radio_fifth.setStyleSheet("font-size: 12px;")
+        self.radio_fifth.clicked.connect(lambda: self.on_fraction_selected(0.2))
+        
+        # High Touch order checkbox with better text
+        self.high_touch_checkbox = QtWidgets.QCheckBox("High Touch单")  # 简化文字
+        self.high_touch_checkbox.setGeometry(10, 180, 120, 22)  # 调整尺寸
+        self.high_touch_checkbox.setStyleSheet("font-size: 12px;")
+        
+        # Auto cancel checkbox and spinbox
+        self.auto_cancel_checkbox = QtWidgets.QCheckBox("秒后自动撤单")
+        self.auto_cancel_checkbox.setGeometry(80, 210, 140, 22)  # 增加宽度
+        self.auto_cancel_checkbox.setStyleSheet("font-size: 12px;")
+        
+        self.cancel_spinbox = QtWidgets.QSpinBox()
+        self.cancel_spinbox.setGeometry(10, 210, 61, 23)
+        self.cancel_spinbox.setValue(3)
+        
+        # Trading buttons - first row: 买入 和 卖出
+        self.buy_button = QtWidgets.QPushButton("买入")
+        self.buy_button.setGeometry(10, 250, 120, 35)  # 增加宽度以更好地利用空间
+        self.buy_button.setStyleSheet("QPushButton { background-color: rgb(170, 0, 0); color: white; font-size: 12px; }")
+        self.buy_button.clicked.connect(self.on_buy_clicked)
+        
+        self.sell_button = QtWidgets.QPushButton("卖出")
+        self.sell_button.setGeometry(140, 250, 120, 35)  # 增加宽度并调整位置
+        self.sell_button.setStyleSheet("QPushButton { background-color: rgb(0, 85, 0); color: white; font-size: 12px; }")
+        self.sell_button.clicked.connect(self.on_sell_clicked)
+        
+        # Trading buttons - second row: 卖空 和 平空
+        self.sell_short_button = QtWidgets.QPushButton("卖空")
+        self.sell_short_button.setGeometry(10, 295, 120, 35)  # 放在买入按钮下方
+        self.sell_short_button.setStyleSheet("QPushButton { background-color: rgb(0, 85, 0); color: white; font-size: 12px; }")
+        self.sell_short_button.clicked.connect(self.on_sell_short_clicked)
+        
+        self.cover_button = QtWidgets.QPushButton("平空")
+        self.cover_button.setGeometry(140, 295, 120, 35)  # 放在卖出按钮下方
+        self.cover_button.setStyleSheet("QPushButton { background-color: rgb(170, 0, 0); color: white; font-size: 12px; }")
+        self.cover_button.clicked.connect(self.on_cover_clicked)
+        
+        # Labels with optimized size and font
+        label_symbol = QtWidgets.QLabel("代码")
+        label_symbol.setGeometry(10, 10, 40, 18)  # 增加宽度和高度
+        label_symbol.setStyleSheet("font-size: 12px;")  # 恢复到12px
+        
+        label_type = QtWidgets.QLabel("类型")
+        label_type.setGeometry(10, 40, 40, 18)
+        label_type.setStyleSheet("font-size: 12px;")
+        
+        label_price = QtWidgets.QLabel("价格")
+        label_price.setGeometry(10, 70, 40, 18)
+        label_price.setStyleSheet("font-size: 12px;")
+        
+        label_volume = QtWidgets.QLabel("数量")
+        label_volume.setGeometry(10, 110, 40, 18)
+        label_volume.setStyleSheet("color: rgb(85, 170, 127); font-size: 12px;")
+        
+        label_shares = QtWidgets.QLabel("股")
+        label_shares.setGeometry(150, 110, 25, 18)
+        label_shares.setStyleSheet("font-size: 12px;")
+        
+        label_max_sell = QtWidgets.QLabel("最大可卖:")
+        label_max_sell.setGeometry(200, 10, 80, 18)  # 调整位置避免重叠
+        label_max_sell.setStyleSheet("font-size: 12px;")
+        
+        label_max_buy = QtWidgets.QLabel("最大可买(参考):")
+        label_max_buy.setGeometry(200, 50, 120, 18)  # 放在最大可卖下面
+        label_max_buy.setStyleSheet("font-size: 12px;")
+        
+        # Position and balance display labels - 放在对应提示文字下面
+        self.max_sell_label = QtWidgets.QLabel("6,020")
+        self.max_sell_label.setGeometry(200, 30, 80, 18)  # 放在"最大可卖"下面
+        self.max_sell_label.setStyleSheet("color: rgb(85, 170, 127); font-size: 12px; font-weight: bold;")
+        
+        self.max_buy_label = QtWidgets.QLabel("170,430")
+        self.max_buy_label.setGeometry(200, 70, 120, 18)  # 放在"最大可买(参考)"下面
+        self.max_buy_label.setStyleSheet("color: rgb(85, 170, 127); font-size: 12px; font-weight: bold;")
+        
+        # Add all widgets to trading tab
+        widgets = [
+            self.symbol_edit, self.type_combo, self.price_spinbox, self.volume_combo,
+            self.radio_half, self.radio_third, self.radio_quarter, self.radio_fifth,
+            self.high_touch_checkbox, self.auto_cancel_checkbox, self.cancel_spinbox,
+            self.buy_button, self.sell_button, self.sell_short_button, self.cover_button,
+            label_symbol, label_type, label_price, label_volume, label_shares,
+            label_max_sell, label_max_buy, self.max_sell_label, self.max_buy_label
+        ]
+        
+        for widget in widgets:
+            widget.setParent(self.trading_tab)
+    
+    def register_event(self) -> None:
+        """Register event handlers."""
+        self.signal_tick.connect(self.process_tick_event)
+        self.signal_position.connect(self.process_position_event)
+        self.signal_account.connect(self.process_account_event)
+        
+        self.event_engine.register(EVENT_TICK, self.signal_tick.emit)
+        self.event_engine.register(EVENT_POSITION, self.signal_position.emit)
+        self.event_engine.register(EVENT_ACCOUNT, self.signal_account.emit)
+    
+    def process_tick_event(self, event: Event) -> None:
+        """Process tick data event."""
+        tick: TickData = event.data
+        if tick.vt_symbol != self.vt_symbol:
+            return
+        
+        # Update price if needed
+        if self.price_spinbox.value() == 0:
+            self.price_spinbox.setValue(tick.last_price)
+    
+    def process_position_event(self, event: Event) -> None:
+        """Process position data event."""
+        position: PositionData = event.data
+        if position.vt_symbol != self.vt_symbol:
+            return
+        
+        self.position_volume = int(position.volume)
+        self.max_sell_label.setText(f"{self.position_volume:,}")
+    
+    def process_account_event(self, event: Event) -> None:
+        """Process account data event."""
+        # Update available balance and max buy calculation
+        # This is a simplified implementation
+        pass
+    
+    def on_symbol_changed(self) -> None:
+        """Handle symbol input change."""
+        symbol_text = self.symbol_edit.text().strip()
+        if not symbol_text:
+            return
+        
+        # Extract symbol code (first part before space)
+        symbol = symbol_text.split()[0]
+        self.vt_symbol = f"{symbol}.SSE"  # Assume SSE exchange for stocks
+        
+        # Subscribe to tick data
+        req = SubscribeRequest(symbol=symbol, exchange=Exchange.SSE)
+        gateway_names = self.main_engine.get_all_gateway_names()
+        if gateway_names:
+            self.main_engine.subscribe(req, gateway_names[0])
+    
+    def on_fraction_selected(self, fraction: float) -> None:
+        """Handle position fraction selection."""
+        if self.position_volume > 0:
+            volume = int(self.position_volume * fraction)
+            # Round to nearest 100 shares
+            volume = (volume // 100) * 100
+            self.volume_combo.setCurrentText(str(volume))
+    
+    def get_order_volume(self) -> int:
+        """Get order volume from input."""
+        volume_text = self.volume_combo.currentText().strip()
+        if not volume_text:
+            return 0
+        try:
+            return int(float(volume_text))
+        except ValueError:
+            return 0
+    
+    def send_order(self, direction: Direction) -> None:
+        """Send order with specified direction."""
+        symbol_text = self.symbol_edit.text().strip()
+        if not symbol_text:
+            QtWidgets.QMessageBox.warning(self, "错误", "请输入股票代码")
+            return
+        
+        symbol = symbol_text.split()[0]
+        volume = self.get_order_volume()
+        if volume <= 0:
+            QtWidgets.QMessageBox.warning(self, "错误", "请输入有效的交易数量")
+            return
+        
+        price = self.price_spinbox.value()
+        if price <= 0:
+            QtWidgets.QMessageBox.warning(self, "错误", "请输入有效的价格")
+            return
+        
+        # Create order request
+        req = OrderRequest(
+            symbol=symbol,
+            exchange=Exchange.SSE,
+            direction=direction,
+            type=OrderType.LIMIT,
+            volume=volume,
+            price=price,
+            offset=Offset.NONE,
+            reference="StockTrading"
+        )
+        
+        # Send order
+        gateway_names = self.main_engine.get_all_gateway_names()
+        if gateway_names:
+            vt_orderid = self.main_engine.send_order(req, gateway_names[0])
+            if vt_orderid:
+                QtWidgets.QMessageBox.information(
+                    self, "委托成功", f"订单已提交: {vt_orderid}"
+                )
+        else:
+            QtWidgets.QMessageBox.warning(self, "错误", "没有可用的交易接口")
+    
+    def on_buy_clicked(self) -> None:
+        """Handle buy button click."""
+        self.send_order(Direction.LONG)
+    
+    def on_sell_clicked(self) -> None:
+        """Handle sell button click."""
+        self.send_order(Direction.SHORT)
+    
+    def on_sell_short_clicked(self) -> None:
+        """Handle sell short button click."""
+        self.send_order(Direction.SHORT)
+    
+    def on_cover_clicked(self) -> None:
+        """Handle cover button click."""
+        self.send_order(Direction.LONG)
+    
+    def update_with_cell(self, cell: BaseCell) -> None:
+        """Update widget with data from a cell (e.g., from tick or position monitor)."""
+        data = cell.get_data()
+        
+        if hasattr(data, 'symbol'):
+            # Update symbol
+            if hasattr(data, 'name'):
+                symbol_text = f"{data.symbol}    {data.name}"
+            else:
+                symbol_text = data.symbol
+            self.symbol_edit.setText(symbol_text)
+            
+            # Set vt_symbol for monitoring
+            if hasattr(data, 'exchange'):
+                self.vt_symbol = f"{data.symbol}.{data.exchange.value}"
+            else:
+                self.vt_symbol = f"{data.symbol}.SSE"
+            
+            # Subscribe to tick data
+            req = SubscribeRequest(symbol=data.symbol, 
+                                 exchange=getattr(data, 'exchange', Exchange.SSE))
+            gateway_names = self.main_engine.get_all_gateway_names()
+            if gateway_names:
+                self.main_engine.subscribe(req, gateway_names[0])
+        
+        # If it's position data, update position-related fields
+        if isinstance(data, PositionData):
+            self.position_volume = int(data.volume)
+            self.max_sell_label.setText(f"{self.position_volume:,}")
+        
+        # If it's tick data, update price
+        if isinstance(data, TickData):
+            self.price_spinbox.setValue(data.last_price)
+
+    def closeEvent(self, event) -> None:
+        """Handle window close event."""
+        # Find and remove this widget from main window's widgets dict
+        if hasattr(self, '_widget_name'):
+            # Get the main window instance (parent widgets until we find MainWindow)
+            parent = self.parent()
+            while parent:
+                if hasattr(parent, 'widgets') and hasattr(parent, 'main_engine'):
+                    # Found the main window
+                    if self._widget_name in parent.widgets:
+                        del parent.widgets[self._widget_name]
+                    break
+                parent = parent.parent()
+        
+        # Call parent closeEvent
+        super().closeEvent(event)
+
+
 class ContractManager(QtWidgets.QWidget):
     """
     Query contract data available to trade in system.
@@ -1290,3 +1646,478 @@ class GlobalDialog(QtWidgets.QDialog):
 
         save_json(SETTING_FILENAME, settings)
         self.accept()
+
+
+class Level2Widget(QtWidgets.QFrame):
+    """
+    Level-2 market data widget based on level2.ui layout.
+    Shows 10-level bid/ask depth data.
+    """
+    
+    signal_tick: QtCore.Signal = QtCore.Signal(Event)
+
+    def __init__(self, main_engine: MainEngine, event_engine: EventEngine) -> None:
+        """"""
+        super().__init__()
+        
+        self.main_engine: MainEngine = main_engine
+        self.event_engine: EventEngine = event_engine
+        
+        self.vt_symbol: str = ""
+        self.symbol_name: str = ""
+        
+        self.init_ui()
+        self.register_event()
+    
+    def init_ui(self) -> None:
+        """Initialize user interface."""
+        self.setFixedSize(800, 500)  # 进一步增大窗口尺寸
+        self.setWindowTitle("Level-2 十档行情")
+        self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.setFrameShadow(QtWidgets.QFrame.Shadow.Plain)
+        
+        # 确保继承主应用的样式
+        app = QtWidgets.QApplication.instance()
+        if app:
+            self.setStyleSheet(app.styleSheet())
+        
+        self.init_top_labels()
+        self.init_bid_table()
+        self.init_ask_table()
+        self.init_info_table()
+    
+    def init_top_labels(self) -> None:
+        """Initialize top information labels."""
+        # 最高价
+        label_high = QtWidgets.QLabel("最高", self)
+        label_high.setGeometry(10, 0, 40, 18)
+        
+        self.label_high_price = QtWidgets.QLabel("4.11", self)
+        self.label_high_price.setGeometry(10, 20, 40, 18)
+        self.label_high_price.setStyleSheet("color: rgb(255, 0, 0);")
+        
+        # 最低价
+        label_low = QtWidgets.QLabel("最低", self)
+        label_low.setGeometry(60, 0, 40, 18)
+        
+        self.label_low_price = QtWidgets.QLabel("4.06", self)
+        self.label_low_price.setGeometry(60, 20, 40, 18)
+        self.label_low_price.setStyleSheet("color: rgb(0, 170, 0);")
+        
+        # 涨幅
+        label_change = QtWidgets.QLabel("涨幅", self)
+        label_change.setGeometry(110, 0, 50, 18)
+        
+        self.label_change_pct = QtWidgets.QLabel("0.49%", self)
+        self.label_change_pct.setGeometry(110, 20, 50, 18)
+        self.label_change_pct.setStyleSheet("color: rgb(255, 0, 0);")
+        
+        # 涨停价
+        label_limit_up = QtWidgets.QLabel("涨停", self)
+        label_limit_up.setGeometry(170, 0, 40, 18)
+        
+        self.label_limit_up_price = QtWidgets.QLabel("4.49", self)
+        self.label_limit_up_price.setGeometry(170, 20, 40, 18)
+        self.label_limit_up_price.setStyleSheet("color: rgb(255, 0, 0);")
+        
+        # 跌停价
+        label_limit_down = QtWidgets.QLabel("跌停", self)
+        label_limit_down.setGeometry(220, 0, 40, 18)
+        
+        self.label_limit_down_price = QtWidgets.QLabel("3.67", self)
+        self.label_limit_down_price.setGeometry(220, 20, 40, 18)
+        self.label_limit_down_price.setStyleSheet("color: rgb(0, 170, 0);")
+        
+        # 开盘价
+        label_open = QtWidgets.QLabel("开盘", self)
+        label_open.setGeometry(270, 0, 40, 18)
+        
+        self.label_open_price = QtWidgets.QLabel("4.07", self)
+        self.label_open_price.setGeometry(270, 20, 40, 18)
+        self.label_open_price.setStyleSheet("color: rgb(0, 170, 0);")
+        
+        # 昨收价
+        label_pre_close = QtWidgets.QLabel("昨收", self)
+        label_pre_close.setGeometry(320, 0, 40, 18)
+        
+        self.label_pre_close_price = QtWidgets.QLabel("4.08", self)
+        self.label_pre_close_price.setGeometry(320, 20, 40, 18)
+        
+        # 可买股票
+        label_buyable = QtWidgets.QLabel("可买股票", self)
+        label_buyable.setGeometry(370, 0, 80, 18)
+        label_buyable.setStyleSheet("color: rgb(255, 170, 0);")
+        
+        self.label_buyable_volume = QtWidgets.QLabel("2000", self)
+        self.label_buyable_volume.setGeometry(370, 20, 80, 18)
+        self.label_buyable_volume.setStyleSheet("color: rgb(255, 170, 0);")
+    
+    def init_bid_table(self) -> None:
+        """Initialize bid (buy) table."""
+        self.bid_table = QtWidgets.QTableWidget(self)
+        self.bid_table.setGeometry(10, 60, 180, 400)  # 进一步调整位置和大小
+        self.bid_table.setWordWrap(True)
+        self.bid_table.setCornerButtonEnabled(True)
+        
+        # Hide row numbers
+        self.bid_table.verticalHeader().setVisible(False)
+        
+        # Set up columns
+        self.bid_table.setColumnCount(2)
+        self.bid_table.setHorizontalHeaderLabels(["买价", "买量"])
+        
+        # Set up rows (10 levels)
+        self.bid_table.setRowCount(10)
+        
+        # Populate with sample data and set colors based on pre_close price from label
+        try:
+            sample_pre_close = float(self.label_pre_close_price.text())
+        except (ValueError, AttributeError):
+            sample_pre_close = 4.08  # Fallback value
+        
+        for i in range(10):
+            # Buy price
+            price_value = float(f"4.{10-i:02d}")
+            price_item = QtWidgets.QTableWidgetItem(f"4.{10-i:02d}")
+            price_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            
+            # Set color based on comparison with sample pre_close
+            if price_value < sample_pre_close:
+                price_item.setForeground(QtGui.QColor(0, 170, 0))  # Green
+            elif price_value > sample_pre_close:
+                price_item.setForeground(QtGui.QColor(255, 0, 0))  # Red
+            else:
+                price_item.setForeground(QtGui.QColor(255, 255, 255))  # White
+            
+            self.bid_table.setItem(i, 0, price_item)
+            
+            # Buy volume
+            volume_item = QtWidgets.QTableWidgetItem(f"{(i+1)*100}")
+            volume_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            self.bid_table.setItem(i, 1, volume_item)
+        
+        # Resize columns to fit content and set proper widths
+        self.bid_table.resizeColumnsToContents()
+        self.bid_table.setColumnWidth(0, 80)  # 买价列宽度
+        self.bid_table.setColumnWidth(1, 90)  # 买量列宽度
+        
+        # Set row height for better visibility
+        for row in range(10):
+            self.bid_table.setRowHeight(row, 30)
+    
+    def init_ask_table(self) -> None:
+        """Initialize ask (sell) table."""
+        self.ask_table = QtWidgets.QTableWidget(self)
+        self.ask_table.setGeometry(200, 60, 180, 400)  # 进一步调整位置和大小
+        
+        # Hide row numbers
+        self.ask_table.verticalHeader().setVisible(False)
+        
+        # Set up columns
+        self.ask_table.setColumnCount(2)
+        self.ask_table.setHorizontalHeaderLabels(["卖价", "卖量"])
+        
+        # Set up rows (10 levels)
+        self.ask_table.setRowCount(10)
+        
+        # Populate with sample data and set colors based on pre_close price from label
+        try:
+            sample_pre_close = float(self.label_pre_close_price.text())
+        except (ValueError, AttributeError):
+            sample_pre_close = 4.08  # Fallback value
+        
+        for i in range(10):
+            # Sell price
+            price_value = float(f"4.{11+i:02d}")
+            price_item = QtWidgets.QTableWidgetItem(f"4.{11+i:02d}")
+            price_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            
+            # Set color based on comparison with sample pre_close
+            if price_value < sample_pre_close:
+                price_item.setForeground(QtGui.QColor(0, 170, 0))  # Green
+            elif price_value > sample_pre_close:
+                price_item.setForeground(QtGui.QColor(255, 0, 0))  # Red
+            else:
+                price_item.setForeground(QtGui.QColor(255, 255, 255))  # White
+            
+            self.ask_table.setItem(i, 0, price_item)
+            
+            # Sell volume
+            volume_item = QtWidgets.QTableWidgetItem(f"{(10-i)*100}")
+            volume_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            self.ask_table.setItem(i, 1, volume_item)
+        
+        # Resize columns to fit content and set proper widths
+        self.ask_table.resizeColumnsToContents()
+        self.ask_table.setColumnWidth(0, 80)  # 卖价列宽度
+        self.ask_table.setColumnWidth(1, 90)  # 卖量列宽度
+        
+        # Set row height for better visibility
+        for row in range(10):
+            self.ask_table.setRowHeight(row, 30)
+    
+    def init_info_table(self) -> None:
+        """Initialize trading details table."""
+        self.info_table = QtWidgets.QTableWidget(self)
+        self.info_table.setGeometry(390, 60, 380, 400)  # 进一步调整位置和大小
+        
+        # Hide row numbers
+        self.info_table.verticalHeader().setVisible(False)
+        
+        # Set table properties for better row highlighting
+        self.info_table.setAlternatingRowColors(False)  # Disable alternating colors
+        self.info_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.info_table.setShowGrid(False)  # Hide grid lines for seamless background
+        
+        # Set up columns for trading details
+        self.info_table.setColumnCount(2)
+        self.info_table.setHorizontalHeaderLabels(["价格", "数量"])
+        
+        # Set up rows for trading details (show recent 20 transactions)
+        self.info_table.setRowCount(20)
+        
+        # Populate with sample trading details data
+        sample_trades = [
+            ("4.09", "1,200"),
+            ("4.08", "800"),
+            ("4.09", "1,500"),
+            ("4.08", "900"),
+            ("4.07", "1,100"),
+            ("4.08", "700"),
+            ("4.09", "1,300"),
+            ("4.08", "600"),
+            ("4.07", "1,000"),
+            ("4.08", "850"),
+            ("4.09", "1,400"),
+            ("4.08", "950"),
+            ("4.07", "750"),
+            ("4.08", "1,250"),
+            ("4.09", "680"),
+            ("4.08", "1,020"),
+            ("4.07", "890"),
+            ("4.08", "1,150"),
+            ("4.09", "720"),
+            ("4.08", "980")
+        ]
+        
+        for i, (price_str, volume_str) in enumerate(sample_trades):
+            # Parse volume to check if it's over 1000
+            volume_clean = volume_str.replace(',', '')  # Remove comma separators
+            try:
+                volume_value = int(volume_clean)
+            except ValueError:
+                volume_value = 0
+            
+            # Price with color coding
+            price_item = QtWidgets.QTableWidgetItem(price_str)
+            price_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            
+            # Volume
+            volume_item = QtWidgets.QTableWidgetItem(volume_str)
+            volume_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            
+            # Set items first
+            self.info_table.setItem(i, 0, price_item)
+            self.info_table.setItem(i, 1, volume_item)
+            
+            # Set color and background based on comparison with pre_close price and volume
+            try:
+                price_value = float(price_str)
+                pre_close_value = float(self.label_pre_close_price.text())
+                
+                if volume_value >= 1000:  # Changed from > 1000 to >= 1000
+                    # High volume: use CSS style for entire row background
+                    if price_value > pre_close_value:
+                        # Red background for entire row when price above pre_close
+                        self.set_row_style(i, "background-color: rgb(200, 0, 0); color: white;")
+                    elif price_value < pre_close_value:
+                        # Green background for entire row when price below pre_close
+                        self.set_row_style(i, "background-color: rgb(0, 150, 0); color: white;")
+                    else:
+                        # Equal to pre_close, use white background with black text
+                        self.set_row_style(i, "background-color: white; color: black;")
+                else:
+                    # Normal volume: only set text color without background
+                    if price_value < pre_close_value:
+                        price_item.setForeground(QtGui.QColor(0, 170, 0))  # Green text
+                        volume_item.setForeground(QtGui.QColor(255, 255, 255))  # White text for volume
+                    elif price_value > pre_close_value:
+                        price_item.setForeground(QtGui.QColor(255, 0, 0))  # Red text
+                        volume_item.setForeground(QtGui.QColor(255, 255, 255))  # White text for volume
+                    else:
+                        price_item.setForeground(QtGui.QColor(255, 255, 255))  # White text
+                        volume_item.setForeground(QtGui.QColor(255, 255, 255))  # White text for volume
+                    
+            except (ValueError, AttributeError):
+                # Default colors if parsing fails
+                price_item.setForeground(QtGui.QColor(255, 255, 255))  # Default white
+                volume_item.setForeground(QtGui.QColor(255, 255, 255))  # Default white
+        
+        # Resize columns to fit content and set proper widths
+        self.info_table.resizeColumnsToContents()
+        self.info_table.setColumnWidth(0, 120)  # 价格列宽度
+        self.info_table.setColumnWidth(1, 180)  # 数量列宽度
+        
+        # Set row height for better visibility
+        for row in range(20):
+            self.info_table.setRowHeight(row, 20)
+    
+    def set_row_style(self, row: int, style: str) -> None:
+        """Set CSS style for entire row to achieve seamless row background color."""
+        for col in range(self.info_table.columnCount()):
+            item = self.info_table.item(row, col)
+            if item:
+                item.setData(QtCore.Qt.ItemDataRole.BackgroundRole, None)  # Clear default background
+                # Create a widget to hold the item with custom styling
+                widget = QtWidgets.QWidget()
+                widget.setStyleSheet(style)
+                layout = QtWidgets.QVBoxLayout(widget)
+                layout.setContentsMargins(0, 0, 0, 0)
+                layout.setSpacing(0)
+                
+                # Create a label with the item text
+                label = QtWidgets.QLabel(item.text())
+                label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                label.setStyleSheet(style)
+                layout.addWidget(label)
+                
+                # Set the widget as the cell widget
+                self.info_table.setCellWidget(row, col, widget)
+    
+    def register_event(self) -> None:
+        """Register event handlers."""
+        self.signal_tick.connect(self.process_tick_event)
+        self.event_engine.register(EVENT_TICK, self.signal_tick.emit)
+    
+    def process_tick_event(self, event: Event) -> None:
+        """Process tick data event."""
+        tick: TickData = event.data
+        if not self.vt_symbol or tick.vt_symbol != self.vt_symbol:
+            return
+        
+        # Update price information
+        if tick.last_price:
+            # Update current price in info table
+            current_price_item = self.info_table.item(0, 1)
+            if current_price_item:
+                current_price_item.setText(f"{tick.last_price:.2f}")
+        
+        # Update bid/ask levels
+        self.update_bid_ask_levels(tick)
+        
+        # Update daily statistics
+        if tick.high_price:
+            self.label_high_price.setText(f"{tick.high_price:.2f}")
+        if tick.low_price:
+            self.label_low_price.setText(f"{tick.low_price:.2f}")
+        if tick.open_price:
+            self.label_open_price.setText(f"{tick.open_price:.2f}")
+        if tick.pre_close:
+            self.label_pre_close_price.setText(f"{tick.pre_close:.2f}")
+            
+        # Calculate and update change percentage
+        if tick.last_price and tick.pre_close:
+            change_pct = (tick.last_price - tick.pre_close) / tick.pre_close * 100
+            self.label_change_pct.setText(f"{change_pct:+.2f}%")
+            
+            # Set color based on change
+            if change_pct > 0:
+                self.label_change_pct.setStyleSheet("color: rgb(255, 0, 0);")
+            elif change_pct < 0:
+                self.label_change_pct.setStyleSheet("color: rgb(0, 170, 0);")
+            else:
+                self.label_change_pct.setStyleSheet("color: rgb(255, 255, 255);")
+    
+    def update_bid_ask_levels(self, tick: TickData) -> None:
+        """Update bid and ask level data with color coding based on pre_close price."""
+        pre_close = tick.pre_close if tick.pre_close else 0
+        
+        # Update bid levels
+        bid_prices = [tick.bid_price_1, tick.bid_price_2, tick.bid_price_3, tick.bid_price_4, tick.bid_price_5]
+        bid_volumes = [tick.bid_volume_1, tick.bid_volume_2, tick.bid_volume_3, tick.bid_volume_4, tick.bid_volume_5]
+        
+        for i, (price, volume) in enumerate(zip(bid_prices, bid_volumes)):
+            if price and volume:
+                price_item = self.bid_table.item(4-i, 0)  # Reverse order for bid (highest first)
+                volume_item = self.bid_table.item(4-i, 1)
+                if price_item and volume_item:
+                    price_item.setText(f"{price:.2f}")
+                    volume_item.setText(f"{int(volume):,}")
+                    
+                    # Set color based on comparison with pre_close price
+                    if pre_close > 0:
+                        if price < pre_close:
+                            # Green for prices below pre_close
+                            price_item.setForeground(QtGui.QColor(0, 170, 0))
+                        elif price > pre_close:
+                            # Red for prices above pre_close
+                            price_item.setForeground(QtGui.QColor(255, 0, 0))
+                        else:
+                            # White for prices equal to pre_close
+                            price_item.setForeground(QtGui.QColor(255, 255, 255))
+        
+        # Update ask levels
+        ask_prices = [tick.ask_price_1, tick.ask_price_2, tick.ask_price_3, tick.ask_price_4, tick.ask_price_5]
+        ask_volumes = [tick.ask_volume_1, tick.ask_volume_2, tick.ask_volume_3, tick.ask_volume_4, tick.ask_volume_5]
+        
+        for i, (price, volume) in enumerate(zip(ask_prices, ask_volumes)):
+            if price and volume:
+                price_item = self.ask_table.item(i, 0)
+                volume_item = self.ask_table.item(i, 1)
+                if price_item and volume_item:
+                    price_item.setText(f"{price:.2f}")
+                    volume_item.setText(f"{int(volume):,}")
+                    
+                    # Set color based on comparison with pre_close price
+                    if pre_close > 0:
+                        if price < pre_close:
+                            # Green for prices below pre_close
+                            price_item.setForeground(QtGui.QColor(0, 170, 0))
+                        elif price > pre_close:
+                            # Red for prices above pre_close
+                            price_item.setForeground(QtGui.QColor(255, 0, 0))
+                        else:
+                            # White for prices equal to pre_close
+                            price_item.setForeground(QtGui.QColor(255, 255, 255))
+    
+    def set_symbol(self, vt_symbol: str, symbol_name: str = "") -> None:
+        """Set the symbol to monitor."""
+        self.vt_symbol = vt_symbol
+        self.symbol_name = symbol_name
+        
+        # Update window title
+        if symbol_name:
+            self.setWindowTitle(f"Level-2 十档行情 - {symbol_name} - {vt_symbol}")
+        else:
+            self.setWindowTitle(f"Level-2 十档行情 - {vt_symbol}")
+        
+        # Subscribe to tick data
+        symbol = vt_symbol.split('.')[0]
+        exchange_str = vt_symbol.split('.')[1] if '.' in vt_symbol else 'SSE'
+        
+        try:
+            exchange = Exchange(exchange_str)
+        except ValueError:
+            exchange = Exchange.SSE
+        
+        req = SubscribeRequest(symbol=symbol, exchange=exchange)
+        gateway_names = self.main_engine.get_all_gateway_names()
+        if gateway_names:
+            self.main_engine.subscribe(req, gateway_names[0])
+    
+    def closeEvent(self, event) -> None:
+        """Handle window close event."""
+        # Find and remove this widget from main window's widgets dict
+        if hasattr(self, '_widget_name'):
+            # Get the main window instance
+            parent = self.parent()
+            while parent:
+                if hasattr(parent, 'widgets') and hasattr(parent, 'main_engine'):
+                    # Found the main window
+                    if self._widget_name in parent.widgets:
+                        del parent.widgets[self._widget_name]
+                    break
+                parent = parent.parent()
+        
+        # Call parent closeEvent
+        super().closeEvent(event)
