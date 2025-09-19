@@ -27,6 +27,7 @@ from .widget import (
     TradingWidget,
     StockTradingWidget,
     Level2Widget,
+    TradingAssistantWidget,
     AboutDialog,
     GlobalDialog
 )
@@ -145,6 +146,15 @@ class MainWindow(QtWidgets.QMainWindow):
             "股票交易",
             get_icon_path(__file__, "contract.ico"),
             self.open_stock_trading_widget,
+            True
+        )
+
+        # Add trading assistant window
+        self.add_action(
+            app_menu,
+            "交易助手",
+            get_icon_path(__file__, "contract.ico"),
+            self.open_trading_assistant_widget,
             True
         )
 
@@ -329,6 +339,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 # Update the stock trading widget with selected tick data
                 widget.update_with_cell(current_item)
         
+        self.widgets[name] = widget
+        widget.show()
+
+    def open_trading_assistant_widget(self) -> None:
+        """
+        Open a new trading assistant widget instance.
+        """
+        import time
+        # Create unique name for each instance
+        timestamp = str(int(time.time() * 1000))
+        name = f"trading_assistant_{timestamp}"
+        
+        widget = TradingAssistantWidget(self.main_engine, self.event_engine)
+        widget._widget_name = name  # Store the name for cleanup
+        widget.setWindowTitle(f"交易助手 - {timestamp[-6:]}")  # Add unique identifier to title
         self.widgets[name] = widget
         widget.show()
 

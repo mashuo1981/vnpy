@@ -2121,3 +2121,7 @@ class Level2Widget(QtWidgets.QFrame):
         
         # Call parent closeEvent
         super().closeEvent(event)
+
+
+# Import additional widgets
+from .assistant_widget import TradingAssistantWidget
