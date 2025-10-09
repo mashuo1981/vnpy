@@ -2,6 +2,7 @@
 Trading Assistant Widget Implementation
 """
 
+import time
 from typing import Optional, List, Dict, Any, Callable
 from .qt import QtCore, QtGui, QtWidgets
 
@@ -10,6 +11,8 @@ from ..event import EVENT_TICK
 from ..object import OrderRequest, TickData
 from ..constant import Direction, Exchange, OrderType, Offset
 from ..locale import _
+from ..tcp_client import TcpOrderClient
+from ..tcp_client.config import get_tcp_config
 
 
 class TradingSectionWidget(QtWidgets.QWidget):
@@ -224,12 +227,18 @@ class TradingAssistantWidget(QtWidgets.QWidget):
         self.buy_sections: List[TradingSectionWidget] = []
         self.sell_sections: List[TradingSectionWidget] = []
         
+        # Load TCP configuration
+        tcp_config = get_tcp_config()
+        self.tcp_host = tcp_config["host"]
+        self.tcp_port = tcp_config["port"]
+        self.enable_tcp_orders = tcp_config["enable_tcp_orders"]
+        
         self.init_ui()
         self.register_event()
 
     def init_ui(self) -> None:
         """Initialize user interface."""
-        self.setFixedSize(1210, 470)  # 高度适应3个买入区域和3个卖出区域
+        self.setFixedSize(1210, 470)  # 恢复原始高度
         self.setWindowTitle("交易助手")
         self.setWindowOpacity(1.0)
         
@@ -247,7 +256,7 @@ class TradingAssistantWidget(QtWidgets.QWidget):
 
     def init_buy_section(self) -> None:
         """Initialize buy (进货) section."""
-        # Buy header frame
+        # Buy header frame (恢复原始位置)
         self.frame_buy_header = QtWidgets.QFrame(self)
         self.frame_buy_header.setGeometry(0, 10, 600, 35)
         self.frame_buy_header.setFrameShape(QtWidgets.QFrame.Shape.Panel)
@@ -299,7 +308,7 @@ class TradingAssistantWidget(QtWidgets.QWidget):
         
         # Create buy sections
         for i, config in enumerate(buy_section_configs):
-            y_position = 50 + (i * 135)  # 从header下方开始，垂直间距135像素
+            y_position = 50 + (i * 135)  # 恢复原始位置
             
             buy_section = TradingSectionWidget(
                 parent=self,
@@ -318,7 +327,7 @@ class TradingAssistantWidget(QtWidgets.QWidget):
 
     def init_sell_header(self) -> None:
         """Initialize unified sell section header."""
-        # Sell header frame
+        # Sell header frame (恢复原始位置)
         self.frame_sell_header = QtWidgets.QFrame(self)
         self.frame_sell_header.setGeometry(605, 10, 600, 35)
         self.frame_sell_header.setFrameShape(QtWidgets.QFrame.Shape.Panel)
@@ -368,7 +377,7 @@ class TradingAssistantWidget(QtWidgets.QWidget):
         
         # Create sell sections
         for i, config in enumerate(sell_section_configs):
-            y_position = 50 + (i * 135)  # 从header下方开始，垂直间距135像素
+            y_position = 50 + (i * 135)  # 恢复原始位置
             
             sell_section = TradingSectionWidget(
                 parent=self,
@@ -500,25 +509,63 @@ class TradingAssistantWidget(QtWidgets.QWidget):
         """Send order to the trading system (without popup)."""
         if not symbol or price <= 0 or quantity <= 0:
             return None
-            
-        # Create order request
-        req = OrderRequest(
-            symbol=symbol,
-            exchange=Exchange.SSE,  # Assume SSE exchange
-            direction=direction,
-            type=OrderType.LIMIT,
-            volume=quantity,
-            price=price,
-            offset=Offset.NONE,
-            reference="TradingAssistant"
-        )
         
-        # Send order
-        gateway_names = self.main_engine.get_all_gateway_names()
-        if gateway_names:
-            vt_orderid = self.main_engine.send_order(req, gateway_names[0])
-            return vt_orderid
-        else:
+        # Check if TCP orders are enabled
+        if self.enable_tcp_orders:
+            try:
+                direction_text = "买入" if direction == Direction.LONG else "卖出"
+                print(f"正在通过TCP发送{direction_text}订单: {symbol} {quantity}股 @ {price}元")
+                
+                # Create TCP client and send order directly
+                with TcpOrderClient(self.tcp_host, self.tcp_port) as tcp_client:
+                    success = tcp_client.make_order(
+                        symbol=symbol,
+                        direction=direction,
+                        volume=quantity,
+                        price=price,
+                        exchange=Exchange.SSE  # Default to SSE
+                    )
+                    
+                    if success:
+                        order_id = f"TCP_{symbol}_{int(time.time())}"
+                        print(f"✓ TCP订单发送成功: {order_id}")
+                        return order_id
+                    else:
+                        print(f"✗ TCP订单发送失败: {symbol}")
+                        return None
+                        
+            except Exception as e:
+                print(f"✗ TCP订单异常: {e}")
+                print("回退到网关方式发送订单...")
+                # Fall back to gateway method if TCP fails
+                pass
+        
+        # Use traditional gateway method (fallback or when TCP disabled)
+        try:
+            # Create order request
+            req = OrderRequest(
+                symbol=symbol,
+                exchange=Exchange.SSE,  # Assume SSE exchange
+                direction=direction,
+                type=OrderType.LIMIT,
+                volume=quantity,
+                price=price,
+                offset=Offset.NONE,
+                reference="TradingAssistant"
+            )
+            
+            # Send order
+            gateway_names = self.main_engine.get_all_gateway_names()
+            if gateway_names:
+                vt_orderid = self.main_engine.send_order(req, gateway_names[0])
+                if vt_orderid:
+                    print(f"✓ 网关订单发送成功: {vt_orderid}")
+                return vt_orderid
+            else:
+                print("✗ 无可用网关")
+                return None
+        except Exception as e:
+            print(f"✗ 网关订单发送失败: {e}")
             return None
     
     def show_batch_order_result(self, order_type: str, section_index: int, successful_orders: List[Dict], failed_orders: List[Dict]) -> None:
