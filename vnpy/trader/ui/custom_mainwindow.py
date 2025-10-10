@@ -23,18 +23,21 @@ class CustomMainWindow(QtWidgets.QMainWindow):
     Custom main window of the trading platform.
     """
 
-    def __init__(self, main_engine: MainEngine, event_engine: EventEngine) -> None:
+    def __init__(self, main_engine: MainEngine, event_engine: EventEngine, user_data: dict = None) -> None:
         """"""
         super().__init__()
 
         self.main_engine: MainEngine = main_engine
         self.event_engine: EventEngine = event_engine
+        self.user_data: dict = user_data or {}
 
         self.widgets: dict[str, QtWidgets.QWidget] = {}
         self.drag_position = None
 
         self.init_ui()
-        self.load_window_states()
+        
+        # 只有当用户选择恢复界面时才加载窗口状态
+        # 这个方法现在被移动到外部调用，根据用户登录时的选择决定
 
     def init_ui(self) -> None:
         """"""
@@ -186,6 +189,7 @@ class CustomMainWindow(QtWidgets.QMainWindow):
         states_file = self.get_window_states_file()
         if not os.path.exists(states_file):
             # 如果没有保存的状态，使用默认位置
+            print("未找到保存的界面布局，使用默认设置")
             self.resize(600, 60)
             return
             
@@ -193,27 +197,40 @@ class CustomMainWindow(QtWidgets.QMainWindow):
             with open(states_file, 'r', encoding='utf-8') as f:
                 states = json.load(f)
             
+            print(f"正在恢复界面布局，共找到 {len(states)} 个窗口")
+            
             # 恢复主窗口位置
             if "main_window" in states:
                 main_state = states["main_window"]
                 self.resize(main_state["width"], main_state["height"])
                 self.move(main_state["x"], main_state["y"])
+                print(f"主窗口恢复到: 位置({main_state['x']}, {main_state['y']}), 大小({main_state['width']}x{main_state['height']})")
             else:
                 self.resize(600, 60)
             
             # 恢复子窗口
+            restored_count = 0
             for name, state in states.items():
                 if name != "main_window" and "widget_type" in state:
                     widget_type = state["widget_type"]
                     if widget_type == "StockTradingWidget":
                         self.restore_stock_trading_widget(name, state)
+                        restored_count += 1
                     elif widget_type == "TradingAssistantWidget":
                         self.restore_trading_assistant_widget(name, state)
+                        restored_count += 1
                     elif widget_type == "Level2Widget":
                         self.restore_level2_widget(name, state)
+                        restored_count += 1
+            
+            if restored_count > 0:
+                print(f"成功恢复 {restored_count} 个子窗口")
+            else:
+                print("未找到需要恢复的子窗口")
                         
         except Exception as e:
             print(f"加载窗口状态失败: {e}")
+            print("使用默认界面布局")
             self.resize(600, 60)
 
     def restore_stock_trading_widget(self, name: str, state: dict) -> None:

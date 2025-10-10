@@ -2,6 +2,7 @@ from vnpy.event import EventEngine
 
 from vnpy.trader.engine import MainEngine
 from vnpy.trader.ui import CustomMainWindow, create_qapp
+from vnpy.trader.ui.login_widget import show_login_dialog
 
 from vnpy_ctp import CtpGateway
 # from vnpy_ctptest import CtptestGateway
@@ -40,8 +41,20 @@ def main():
     """"""
     qapp = create_qapp()
 
+    # 显示登录对话框
+    print("正在启动vnpy交易系统...")
+    user_data = show_login_dialog()
+    
+    # 检查登录是否成功
+    if not user_data:
+        print("登录已取消，程序退出")
+        return
+    
+    print(f"用户 {user_data['username']} 登录成功！")
+    print(f"恢复界面设置: {user_data['restore_interface']}")
+    
+    # 登录成功后初始化交易系统
     event_engine = EventEngine()
-
     main_engine = MainEngine(event_engine)
 
     main_engine.add_gateway(CtpGateway)
@@ -77,8 +90,20 @@ def main():
     # main_engine.add_app(WebTraderApp)
     # main_engine.add_app(PortfolioManagerApp)
 
-    main_window = CustomMainWindow(main_engine, event_engine)
+    # 创建并显示主窗口
+    print("正在初始化交易界面...")
+    main_window = CustomMainWindow(main_engine, event_engine, user_data)
+    
+    # 根据用户设置决定是否恢复界面
+    if user_data['restore_interface']:
+        print("恢复上次界面设置...")
+        main_window.load_window_states()
+    else:
+        print("不恢复界面设置，使用默认布局")
+        # main_window.restore_settings()
+    
     main_window.show()  # 使用show()而不是showMaximized()，因为CustomMainWindow现在是固定高度的工具栏窗口
+    print("vnpy交易系统启动完成！")
 
     qapp.exec()
 
